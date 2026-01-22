@@ -1,82 +1,66 @@
-# Glacial Lake Outburst Flood (GLOF) Risk Prediction Pipeline
+# GLOF Risk Prediction Framework for Himalayan Glacial Lakes
 
-This repository accompanies a study presented at the 2025 Midstates Research Symposium examining **Glacial Lake Outburst Flood (GLOF)** risks in the Himalayas using satellite remote sensing and machine‑learning.  The goal is to forecast which glacial lakes are most susceptible to outburst flooding.  Below is a detailed description of the pipeline, including the pre‑ML geospatial processing routines from the `Final_LakeFeatures.ipynb` notebook, and key functions used throughout the project.
+This repository presents a machine‑learning pipeline designed to assess the likelihood of **Glacial Lake Outburst Floods (GLOFs)** across the Himalayan region. By integrating satellite remote sensing, digital elevation models, and glacier inventories, the framework predicts which glacial lakes pose the greatest hazard. The workflow spans from raw geospatial data ingestion to an interactive web map for risk visualization.
 
-## Project objectives
+## Core goals
 
-- **Identify potentially dangerous glacial lakes** in the Himalayas using Landsat imagery, SRTM DEMs and the GLIMS glacier inventory.
-- **Extract lake‑centric features** such as lake area, elevation, expansion rate, glacier contact, distance to glaciers and slope.
-- **Impute missing data** using Multiple Imputation by Chained Equations (MICE) to deal with gaps in remote‑sensing archives.
-- **Train machine‑learning models** to classify whether a lake has previously experienced a GLOF.
-- **Develop an interactive hazard map** that allows users to visualise predicted risk for individual lakes.
+- **Detect and catalog Himalayan glacial lakes** using multi‑temporal Landsat imagery, SRTM DEMs, and the GLIMS glacier database.
+- **Derive lake‑specific attributes** such as surface area, elevation, expansion trends, glacier adjacency, and topographic slope.
+- **Address incomplete observations** with Multiple Imputation by Chained Equations (MICE) to fill gaps in the satellite record.
+- **Build and evaluate predictive models** that classify lakes based on prior GLOF occurrences.
+- **Deliver an interactive hazard viewer** enabling stakeholders to explore lake‑level risk estimates.
 
-## Repository structure
+## Repository layout
 
-| Directory/File | Description |
-|---------------|-------------|
-| **`Notebooks/`** | Jupyter notebooks for data preprocessing, feature engineering, exploratory analysis, model training and deployment.  Key notebooks include `Final_LakeFeatures.ipynb` (detailed geospatial processing), `ML_implementation.ipynb` (model training), and `Model_deployment.ipynb` (building a Streamlit app). |
-| **`CSVs/`** | Cleaned and engineered datasets used for modelling (e.g., `df_final_with_laketypesorted_pre.csv`, `ml_pos_y_drop.csv`). |
-| **`model.pkl`** | Serialised logistic regression model trained on the engineered features. |
-| **`requirements.txt`** | List of Python packages needed to run the notebooks (e.g., scikit‑learn, pandas, miceforest, folium, streamlit):contentReference[oaicite:0]{index=0}. |
-| **`Midstates Research Symposium Poster.png`** | Poster summarising the project methodology and results. |
+| Directory/File | Purpose |
+|----------------|---------|
+| **`Notebooks/`** | Jupyter notebooks covering data ingestion, feature engineering, exploratory analysis, model training, and deployment. Highlights: `Final_LakeFeatures.ipynb` (geospatial processing), `ML_implementation.ipynb` (modeling), `Model_deployment.ipynb` (Streamlit app). |
+| **`CSVs/`** | Processed datasets ready for machine learning (e.g., `df_final_with_laketypesorted_pre.csv`, `ml_pos_y_drop.csv`). |
+| **`model.pkl`** | Serialized logistic regression model trained on engineered features. |
+| **`requirements.txt`** | Python package dependencies (scikit‑learn, pandas, miceforest, folium, streamlit, etc.). |
+| **`Midstates Research Symposium Poster.png`** | Visual summary of methodology and findings. |
 
-## Data sources
+## Input datasets
 
-The pipeline uses several geospatial data products:
+The pipeline ingests several geospatial products:
 
-1. **Landsat 5/7/8/9 Surface Reflectance**: used to compute the **Normalized Difference Water Index (NDWI)** for lake detection.  Gaps in Landsat 7 caused by the SLC failure (~2003–2009) introduce missing data:contentReference[oaicite:1]{index=1}.
-2. **SRTM (USGS/SRTMGL1_003) DEM**: provides elevation data for lakes and glaciers.
-3. **GLIMS Glacier Inventory** (`GLIMS/current`): glacier polygons used to determine glacier contact, distance, elevation difference and slope metrics.
-4. **IHR Glacial Lake Atlas**: database of ~5,000 glacial lakes across the Himalayas.  Merged with GLOF event catalogues to create positive (historical GLOF) and negative samples.
-5. **GLOF event records**: compiled from literature and the IHR atlas; positive labels correspond to lakes with recorded GLOFs:contentReference[oaicite:2]{index=2}.
+1. **Landsat 5/7/8/9 Surface Reflectance**: Used to compute the **Normalized Difference Water Index (NDWI)** for lake boundary extraction. Landsat 7’s SLC gap (≈2003–2009) introduces missing data.
+2. **SRTM DEM (USGS/SRTMGL1_003)**: Supplies elevation for lakes and glaciers.
+3. **GLIMS Glacier Inventory**: Glacier polygons for calculating contact, distance, elevation contrast, and slope.
+4. **IHR Glacial Lake Atlas**: A catalog of ~5,000 Himalayan lakes, merged with GLOF records to generate positive (historical GLOF) and negative samples.
+5. **Historical GLOF database**: Compiled from literature and the IHR atlas; positive labels correspond to lakes with documented outbursts.
 
-## Geospatial preprocessing and feature extraction
+## Geospatial workflow and feature generation
 
 ### Lake detection via Google Earth Engine
 
-The `Final_LakeFeatures.ipynb` notebook implements Earth Engine (EE) functions that detect lake polygons around specified coordinates and years.  These functions operate entirely on the EE server, maximising efficiency when applied to thousands of lakes.
+`Final_LakeFeatures.ipynb` contains Earth Engine (EE) functions that automatically detect lake polygons for given coordinates and years. These functions run entirely on EE servers, ensuring scalability across thousands of lakes.
 
-- **`detect_lake_from_point(point, year, search_radius=3000, ndwi_thresh=0.3)`**: For each non‑GLOF lake, this function buffers a point (`ee.Geometry.Point`) by a search radius (default 3 km) to define an area of interest, then:
-  1. Retrieves a fall‑season Landsat image collection for the year ± 1 year, selecting Landsat 5, 7, 8 or 9 depending on the date.
-  2. Applies a cloud/shadow/snow mask (`mask_landsat_clouds`), scales surface reflectance bands (`scale_sr`) and adds NDWI (`add_ndwi`).  NDWI is computed as `(green − nir)/(green + nir)`:contentReference[oaicite:3]{index=3}.
-  3. Computes a median composite, thresholds NDWI at `ndwi_thresh` to identify water, and converts the water mask to polygons using `reduceToVectors`.
-  4. Attaches an attribute `Lake_area_calculated_ha` (polygon area in hectares) and returns the largest polygon; if no polygons are found, returns the original point with area `None`.
+- **`detect_lake_from_point(point, year, search_radius=3000, ndwi_thresh=0.3)`**: Buffers a point by `search_radius` (default 3 km), retrieves fall‑season Landsat imagery for `year ± 1`, applies cloud/snow masking, computes NDWI, thresholds water, and vectorizes the result. Returns the largest water polygon with area in hectares.
+- **`detect_lake_pre_glof(point, year, search_radius=3000, ndwi_thresh=0.3)`**: Similar to above but composites imagery from `year-3` to `year-1` to capture the lake before a GLOF event.
+- **`df_to_fc(df)`**: Converts a pandas DataFrame of lake points into an EE `FeatureCollection`.
+- **`detect_area_nonglof(feature)` / `detect_area_glof(feature)`**: Wrappers that apply the above functions to each feature in a collection and attach `Lake_area_calculated_ha`.
 
-- **`detect_lake_pre_glof(point, year, search_radius=3000, ndwi_thresh=0.3)`**: Similar to `detect_lake_from_point` but used for positive lakes.  It composes Landsat images over the years `year-3` to `year-1` to capture the lake before the GLOF event, then performs NDWI thresholding and vectorisation.
+### Expansion dynamics
 
-- **`df_to_fc(df)`**: Converts a pandas DataFrame of lakes (with longitude, latitude and other properties) into an EE `FeatureCollection` of points.
+Expansion rates are expressed as hectares per year and capture lake growth over time:
 
-- **`detect_area_nonglof(feature)` / `detect_area_glof(feature)`**: Wrapper functions applied to each point in a `FeatureCollection`.  They call `detect_lake_from_point` or `detect_lake_pre_glof`, copy original properties and attach `Lake_area_calculated_ha`.
+- **`calc_expansion_glof(feature)`** (5‑ and 10‑year variants): Detects lake area at `year` and at `year-5`/`year-10`, then computes `(area_t2 - area_t1) / years`.
+- **`calc_expansion_nonglof(feature)`**: Same logic for non‑GLOF lakes.
 
-### Expansion rates
+### Glacier proximity metrics
 
-Expansion rates measure how quickly lake area changes, expressed as hectares per year.  Functions defined in the notebook compute 5‑year and 10‑year expansion rates for GLOF and non‑GLOF lakes:
+Glacier adjacency is a critical risk factor. Server‑side functions extract these metrics:
 
-- **`calc_expansion_glof(feature)`** (5 y and 10 y versions): For a positive lake, detect lake polygons at `year` and at `year − 5` (or `year − 10`) using `detect_lake_pre_glof`, retrieve their areas, and compute `(area_t2 − area_t1) / years`.  The function returns a new feature containing the point coordinates, areas and `expansion_ha_peryr`.
+- **`get_nearest_glacier(lake_geom, buffer_km=50)`**: Finds glaciers within a 50 km buffer. Returns contact status, nearest distance, lake and glacier elevations, slope, glacier area, and GLIMS IDs.
+- **`_glacier_metrics_for_lake_polygon(lake, buffer_km=50)`**: Enhances robustness by counting touching glaciers, summing their areas, and computing slope via DEM.
+- **`annotate_glacier_metrics_from_polygons(lakes_fc, buffer_km=50)`**: Applies the above to a `FeatureCollection` of lake polygons, appending glacier attributes.
 
-- **`calc_expansion_nonglof(feature)`** (5 y and 10 y versions): Same as above but uses `detect_lake_from_point` to compute expansion rates for negative lakes.
+These functions automate complex spatial analyses without manual GIS steps.
 
-### Glacier metrics
+## Engineered feature set
 
-Glacier proximity and elevation are key predictors of GLOF risk.  The notebook defines server‑side functions to extract these metrics:
-
-- **`get_nearest_glacier(lake_geom, buffer_km=50)`**: Given a lake polygon, identifies glaciers within a search radius (default 50 km) from the GLIMS inventory.  If glaciers intersect the lake, it sums their area and sets `nearest_glacier_dist_m=0`; otherwise, it finds the nearest glacier by distance.  It returns a dictionary containing:
-  - `glacier_contact` (boolean),
-  - `nearest_glacier_dist_m` (distance in metres),
-  - `lake_elev_m` and `glacier_elev_m` (elevations from SRTM),
-  - `slope_glac_to_lake` (rise/run slope between the lake and glacier),
-  - `glacier_area_km2` (area in square kilometres), and
-  - `glacier_ids` (list of GLIMS IDs).
-
-- **`_glacier_metrics_for_lake_polygon(lake, buffer_km=50)`**: A more robust version used to annotate many lakes.  It computes the nearest glacier, counts the number of touching glaciers (`glacier_touch_count`), sums their areas (`glacier_area_ha`), and calculates slope using the DEM.  If no glaciers are found, it returns null‑like fields.
-
-- **`annotate_glacier_metrics_from_polygons(lakes_fc, buffer_km=50)`**: Applies `_glacier_metrics_for_lake_polygon` to each feature in a `FeatureCollection` of lake polygons, returning a new collection with glacier metrics attached.
-
-These functions enable automated extraction of complex spatial relationships for each lake, eliminating the need for manual GIS processing.
-
-## Constructed feature set
-
-After running the EE functions, the resulting datasets (e.g., `df_final_with_laketypesorted_pre.csv`) include the following engineered features:
+After processing, datasets (e.g., `df_final_with_laketypesorted_pre.csv`) contain the following fields:
 
 | Feature | Description |
 |--------|-------------|
@@ -95,40 +79,38 @@ After running the EE functions, the resulting datasets (e.g., `df_final_with_lak
 | `glacier_contact` | Binary indicator: `True` if the lake touches a glacier, `False` otherwise. |
 | `GLOF` | Target label: 1 if a historical GLOF occurred, 0 otherwise. |
 
-## Handling missing data
+## Missing data treatment
 
-Due to Landsat gaps and variable DEM coverage, many features contain `NaN`.  The machine‑learning notebook (`ML_implementation.ipynb`) uses **MICE** from the `miceforest` library to impute missing values.
+Satellite gaps and DEM limitations lead to missing values. The ML notebook (`ML_implementation.ipynb`) employs **MICE** (`miceforest`) to impute these gaps, preserving dataset integrity for modeling.
 
-## Model training and evaluation
+## Modeling pipeline
 
-The model training follows these steps:
+1. **Data preparation**: One‑hot encode categoricals, split imputed data (80/20), and use stratified 5‑fold CV.
+2. **Baseline evaluation**: Train logistic regression, random forest, gradient boosting, and SVM. Logistic regression achieves the highest recall (~0.92) with modest precision (~0.50).
+3. **Hyperparameter tuning**: Adjust class weights to prioritize recall. The tuned logistic regression reaches recall ≈ 0.92 and F1 ≈ 0.76.
+4. **Model persistence**: Serialize the final model to `model.pkl` for use in the Streamlit app.
 
-1. **Prepare the dataset**: One‑hot encode categorical variables (`Lake_type_simplified`, `is_supraglacial`, `glacier_contact`) and split the imputed dataset into training and validation sets (80/20).  Stratified 5‑fold cross‑validation ensures balanced evaluation.
-2. **Baseline models**: Train logistic regression (LR), random forest (RF), gradient boosting (GB) and support vector machine (SVM).  LR exhibits the highest recall (~0.92) but lower precision (~0.50):contentReference[oaicite:17]{index=17}.
-3. **Tune the logistic regression**: Adjust class weights to prioritise recall.  The tuned LR achieves recall ≈ 0.92 and F1 ≈ 0.76 on the validation set.
-4. **Save the model**: The final LR model is serialised to `model.pkl` and used in the Streamlit app.
+## Interactive risk visualization
 
-## Interactive hazard map
+`Model_deployment.ipynb` illustrates how to build an interactive hazard map:
 
-`Model_deployment.ipynb` demonstrates how to build an interactive hazard map:
+- Load `model.pkl` and compute per‑lake probabilities.
+- Render a `folium.Map` centered on the Himalayas. Circle markers are colored by risk (green → low, yellow → moderate, red → high).
+- Wrap the map in a `streamlit` app (`app.py`) for user interaction and lake detail pop‑ups.
 
-- Load `model.pkl` and compute predicted probabilities for each lake.
-- Use `folium.Map` to create a map centred on the Himalayas.  Add circle markers where colour reflects predicted GLOF risk (e.g. green for low risk, yellow for moderate, red for high risk).
-- Build a simple `streamlit` app (`app.py`) that displays the map and allows users to filter lakes or view details via tooltips.
+## Findings and constraints
 
-## Results and limitations
+- **Performance**: The tuned logistic regression balances recall and precision (recall ≈ 0.92, F1 ≈ 0.76) and is selected for deployment.
+- **Key drivers**: Glacier contact count, distance to nearest glacier, glacier elevation, lake expansion rates, and slope are top predictors. Rapidly expanding lakes near or touching glaciers are flagged as higher risk.
+- **Limitations**: Landsat 7 SLC gaps and NDWI misclassification can miss small lakes; historical GLOF records are incomplete; DEM resolution constrains slope estimates in steep terrain; annual snapshots may overlook short‑term changes.
 
-- **Model performance**: The tuned logistic regression provides a balanced trade‑off between recall and precision (recall ≈ 0.92, F1 ≈ 0.76) and was chosen for deployment:contentReference[oaicite:18]{index=18}.
-- **Key predictors**: Glacier contact count, distance to the nearest glacier, glacier elevation, lake expansion rates and slope are among the most informative features.  Rapidly expanding lakes that touch or closely approach glaciers are predicted to be higher risk.
-- **Limitations**: Missing satellite data (e.g., Landsat 7 SLC failure) and NDWI misclassification can lead to under‑detected small lakes and label uncertainty.  Historical GLOF records are incomplete, DEM resolution limits slope estimation in rugged terrain, and the annual temporal resolution may miss short‑term lake changes:contentReference[oaicite:19]{index=19}.
+## Quick start guide
 
-## Getting started
+1. **Install packages**: Create a virtual environment and run `pip install -r requirements.txt`.
+2. **Reproduce features**: Run `Final_LakeFeatures.ipynb` in a Jupyter environment with Earth Engine access (`ee.Authenticate()`, `ee.Initialize()`). Adjust project IDs if needed.
+3. **Train the model**: Execute `ML_implementation.ipynb` to impute data, encode features, train models, and save the final logistic regression.
+4. **Launch the viewer**: Run `streamlit run app.py` (after generating `app.py` from `Model_deployment.ipynb`) to explore the interactive hazard map.
 
-1. **Install dependencies**: Create an environment and run `pip install -r requirements.txt`.
-2. **Run the geospatial notebook**: To reproduce the engineered features, execute `Final_LakeFeatures.ipynb` in a Jupyter environment connected to Earth Engine.  You will need to authenticate with Google Earth Engine (`ee.Authenticate()` and `ee.Initialize()`) and may need to adjust `project` IDs for access.
-3. **Train the model**: Run `ML_implementation.ipynb` to impute missing data, perform one‑hot encoding, train and evaluate models, and save the final logistic regression model.
-4. **Launch the app**: Use `streamlit run app.py` (after creating `app.py` based on `Model_deployment.ipynb`) to view the interactive hazard map.
+## Credits
 
-## Acknowledgements
-
-This research was supported by the **Richter Memorial Fund at Knox College**. We thank **Dr. Andrew Leahy** for mentorship and the developers of `earthengine-api`, `geemap`, `miceforest`, `scikit-learn`, `folium` and `streamlit`.  Please refer to the attached poster for a visual overview of the methods and results.
+This work was funded by the **Richter Memorial Fund at Knox College**. We thank **Dr. Andrew Leahy** for guidance and the creators of `earthengine-api`, `geemap`, `miceforest`, `scikit-learn`, `folium`, and `streamlit`. The attached poster provides a concise visual summary of methods and outcomes.
