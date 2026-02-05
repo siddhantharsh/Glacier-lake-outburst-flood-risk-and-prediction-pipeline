@@ -111,6 +111,4 @@ Satellite gaps and DEM limitations lead to missing values. The ML notebook (`ML_
 3. **Train the model**: Execute `ML_implementation.ipynb` to impute data, encode features, train models, and save the final logistic regression.
 4. **Launch the viewer**: Run `streamlit run app.py` (after generating `app.py` from `Model_deployment.ipynb`) to explore the interactive hazard map.
 
-## Credits
-
-This work was funded by the **Richter Memorial Fund at Knox College**. We thank **Dr. Andrew Leahy** for guidance and the creators of `earthengine-api`, `geemap`, `miceforest`, `scikit-learn`, `folium`, and `streamlit`. The attached poster provides a concise visual summary of methods and outcomes.
+Made by Siddhant Harsh
